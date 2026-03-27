@@ -122,15 +122,31 @@ function UserAvatar({ name = 'SmartPay 使用者' }: { name?: string }) {
 }
 
 type UserCardType = '一般回饋' | '旅遊/海外' | '哩程' | '現金回饋' | '學生/入門'
+type PayMode = 'proactive' | 'scan'
+type PayPriority = 'points' | 'miles' | 'cashback'
 type UserCard = {
   id: string
   name: string
+  issuer: 'ctbc' | 'other'
   type: UserCardType
   masked: string
   note: string
+  priority: number
+  tags: string[]
+  monthlyReward: number
+  usageCount: number
+  categorySplit: { dining: number; travel: number; daily: number }
   badgeText?: string
   badgeStyle?: { [key: string]: string }
   chipBg: string
+  goRate: string
+  goReminder: string
+  rules: {
+    general: string[]
+    overseas: string[]
+    ecommerce: string[]
+  }
+  sourceUrl: string
 }
 
 function AddCardModal({
@@ -259,36 +275,83 @@ function App() {
 
   const [addCardOpen, setAddCardOpen] = useState(false)
   const [rewardDetailOpen, setRewardDetailOpen] = useState(false)
+  const [cardDetailId, setCardDetailId] = useState<string | null>(null)
+  const [ruleTab, setRuleTab] = useState<'general' | 'overseas' | 'ecommerce'>('general')
+  const [payMode, setPayMode] = useState<PayMode>('proactive')
+  const [payPriority, setPayPriority] = useState<PayPriority>('cashback')
+  const [merchantId, setMerchantId] = useState('PXMART-001')
   const [userCards, setUserCards] = useState<UserCard[]>(() => [
     {
       id: 'everywhere',
       name: '中信 Everywhere 卡',
+      issuer: 'ctbc',
       type: '現金回饋',
       masked: '**** **** **** 1234',
       note: '一般消費 3% 現金回饋',
+      priority: 1,
+      tags: ['餐廳', '日常購物'],
+      monthlyReward: 820,
+      usageCount: 36,
+      categorySplit: { dining: 46, travel: 14, daily: 40 },
       badgeText: '主力卡',
       badgeStyle: { background: 'var(--g50)', color: 'var(--g800)' },
       chipBg: 'var(--g800)',
+      goRate: '5%',
+      goReminder: '需先完成活動登錄，單月加碼上限 NT$1,200',
+      rules: {
+        general: ['一般消費 3%', '指定活動再加碼 1%', '部分通路需先登錄活動'],
+        overseas: ['海外消費基礎 3%', '指定幣別加碼 1%', '避免 DCC 以免影響回饋'],
+        ecommerce: ['指定電商 4%', '外送平台 3%', '回饋依當月公告名額為準'],
+      },
+      sourceUrl: 'https://www.ctbcbank.com/twrbo/zh_tw/cc_index/cc_product/cc_hot.html',
     },
     {
       id: 'gogo',
       name: '中信 @GOGO 卡',
+      issuer: 'ctbc',
       type: '旅遊/海外',
       masked: '**** **** **** 5678',
       note: '海外 5% 點數',
+      priority: 2,
+      tags: ['旅遊', '國外消費'],
+      monthlyReward: 310,
+      usageCount: 12,
+      categorySplit: { dining: 8, travel: 72, daily: 20 },
       badgeText: '旅遊',
       badgeStyle: { background: '#E8EEFF', color: '#1A3080' },
       chipBg: '#2C4A8C',
+      goRate: '3%',
+      goReminder: '海外加碼需累積消費滿 NT$6,000 才觸發',
+      rules: {
+        general: ['一般消費 1%', '指定行動支付 2%', '每月加碼有上限'],
+        overseas: ['海外最高 5%', '需達門檻後回溯計算', '海外回饋可能隔月入帳'],
+        ecommerce: ['網購/外送最高 3%', '指定平台外不適用加碼'],
+      },
+      sourceUrl: 'https://www.ctbcbank.com/twrbo/zh_tw/cc_index/cc_product/cc_hot.html',
     },
     {
       id: 'a',
       name: 'A 銀行白金卡',
+      issuer: 'other',
       type: '一般回饋',
       masked: '**** **** **** 0007',
       note: '一般消費 1% 回饋',
+      priority: 3,
+      tags: ['日常購物'],
+      monthlyReward: 117,
+      usageCount: 9,
+      categorySplit: { dining: 20, travel: 0, daily: 80 },
       badgeText: '備用',
       badgeStyle: { background: 'var(--color-background-tertiary)', color: 'var(--color-text-secondary)' },
       chipBg: '#4A5568',
+      goRate: '1%',
+      goReminder: '單筆滿 NT$888 才可累積抽獎點數',
+      rules: {
+        general: ['一般消費 1%', '每月上限 500 點', '保底回饋入帳較慢'],
+        overseas: ['海外 2%（含手續費）', '手續費 1.5% 另計'],
+        ecommerce: ['網購 1.5%', '僅特定合作平台可享'],
+      },
+      sourceUrl: 'https://www.example.com/',
     },
   ])
 
@@ -337,9 +400,110 @@ function App() {
     () => ['日本', '韓國', '新加坡', '泰國', '越南', '美國', '加拿大', '英國', '法國', '德國', '西班牙', '義大利', '澳洲'],
     [],
   )
+  const scenarioTags = ['餐廳', '旅遊', '日常購物', '生活量販']
+
+  const updateCardPriority = (id: string, priority: number) => {
+    setUserCards((prev) => prev.map((c) => (c.id === id ? { ...c, priority } : c)))
+  }
+
+  const toggleCardTag = (id: string, tag: string) => {
+    setUserCards((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c
+        const exists = c.tags.includes(tag)
+        return { ...c, tags: exists ? c.tags.filter((t) => t !== tag) : [...c.tags, tag] }
+      }),
+    )
+  }
 
   const q = travelQuery.trim().toLowerCase()
   const matchesQuery = (text: string) => (q.length === 0 ? true : text.toLowerCase().includes(q))
+  const selectedCard = useMemo(
+    () => (cardDetailId ? userCards.find((c) => c.id === cardDetailId) ?? null : null),
+    [cardDetailId, userCards],
+  )
+
+  const travelInsight = useMemo(() => {
+    const destination = travelCountry
+    const isJapan = destination === '日本'
+    const isWest = ['美國', '加拿大', '英國', '法國', '德國', '西班牙', '義大利'].includes(destination)
+    const recommendation = isJapan
+      ? {
+          title: '日本偏現金場景',
+          action: '優先推薦海外手續費最低卡，並預留換匯現金。',
+          bestCard: '中信 @GOGO 卡（海外手續費較低 + 海外 5%）',
+        }
+      : isWest
+        ? {
+            title: '歐美刷卡主場景',
+            action: '優先推薦整體回饋率最高卡，減少現金攜帶。',
+            bestCard: '中信 Everywhere 卡（綜合回饋與通路適配）',
+          }
+        : {
+            title: `${destination} 混合支付場景`,
+            action: '以回饋率與手續費平衡，建議一主一卡備援。',
+            bestCard: '中信 Everywhere 卡（主）＋中信 @GOGO 卡（備）',
+          }
+
+    const notices = [
+      {
+        bank: '中信 Everywhere',
+        raw: '海外加碼活動需先登錄，名額限 5,000，單月回饋上限 NT$1,200。',
+        plain: '先去活動頁完成登錄，避免刷了拿不到加碼；本月最高回饋抓 NT$1,200。',
+      },
+      {
+        bank: '中信 @GOGO',
+        raw: '指定幣別享額外回饋，需達門檻消費 NT$6,000。',
+        plain: '集中到同一卡刷滿 NT$6,000 再結帳，才會觸發額外回饋。',
+      },
+      {
+        bank: 'A 銀行卡',
+        raw: '滿額贈需當月海外累積達 NT$20,000，隔月回饋入帳。',
+        plain: '若你本趟預算不到 NT$20,000，這張卡的滿額贈可以先不追。',
+      },
+    ]
+
+    const timeline = [
+      { day: '出發前 7 天', task: '確認主力卡/備援卡海外交易功能已開啟' },
+      { day: '出發前 3 天', task: '完成加碼活動登錄，檢查名額是否已滿' },
+      { day: '出發前 2 天', task: `依 ${destination} 支付習慣設定換匯目標金額（建議 NT$10,000~20,000）` },
+      { day: '出發前 1 天', task: '設定交易推播與單筆上限，避免盜刷風險' },
+    ]
+
+    return { recommendation, notices, timeline, isJapan, isWest }
+  }, [travelCountry])
+
+  const merchantProfile = useMemo(() => {
+    const id = merchantId.trim().toUpperCase()
+    if (id.includes('PX') || id.includes('MART')) {
+      return { name: '全聯福利中心', channel: '生活量販', distanceM: 180 }
+    }
+    if (id.includes('UNI') || id.includes('OPEN')) {
+      return { name: '7-ELEVEN', channel: '統一通路', distanceM: 120 }
+    }
+    if (id.includes('COF') || id.includes('CAFE')) {
+      return { name: '連鎖咖啡店', channel: '餐飲美食', distanceM: 90 }
+    }
+    return { name: '一般合作商家', channel: '一般消費', distanceM: 240 }
+  }, [merchantId])
+
+  const isInsideGeofence = merchantProfile.distanceM <= 200
+  const proactiveMessage =
+    payPriority === 'points'
+      ? `即將抵達${merchantProfile.name}，今天使用中信 Everywhere 卡可得 3X 點數，比隨機刷多賺 NT$45！`
+      : payPriority === 'miles'
+        ? `即將抵達${merchantProfile.name}，今天使用中信 Everywhere 卡可加速累積里程，比隨機刷多賺 1.5X！`
+        : `即將抵達${merchantProfile.name}，今天使用中信 Everywhere 卡可得 5% 現金回饋，比隨機刷多賺 NT$45！`
+
+  const payRecommendation = useMemo(() => {
+    if (payPriority === 'points') {
+      return { card: '中信 Everywhere 卡', rewardText: '3X 點數', estimateText: 'NT$45 等值', percent: '3X' }
+    }
+    if (payPriority === 'miles') {
+      return { card: '中信 Everywhere 卡', rewardText: '1.5X 里程累積', estimateText: '約 68 哩', percent: '1.5X' }
+    }
+    return { card: '中信 Everywhere 卡', rewardText: '5% 現金回饋', estimateText: 'NT$45', percent: '5%' }
+  }, [payPriority])
 
   const screens = useMemo(() => {
     return {
@@ -374,7 +538,31 @@ function App() {
                   <span className="bell-dot" aria-hidden="true" />
                 </span>
               </div>
-              <div className="push-body">即將抵達全聯，使用中信 Everywhere 卡可得 3X 點數，比隨機刷多賺 NT$45</div>
+              <div className="push-body">{proactiveMessage}</div>
+              <div className="push-sync">
+                <div className="push-sync-item">
+                  <span>優先策略</span>
+                  <strong>
+                    {payPriority === 'points'
+                      ? '優先折抵點數'
+                      : payPriority === 'miles'
+                        ? '優先累積里程'
+                        : '優先現金回饋'}
+                  </strong>
+                </div>
+                <div className="push-sync-item">
+                  <span>地理圍欄</span>
+                  <strong>{isInsideGeofence ? `已進入 ${merchantProfile.distanceM}m 觸發範圍` : `${merchantProfile.distanceM}m（尚未觸發）`}</strong>
+                </div>
+                <div className="push-sync-item">
+                  <span>抵達倒數</span>
+                  <strong>{isInsideGeofence ? '約 2 分鐘' : '約 4 分鐘'}</strong>
+                </div>
+                <div className="push-sync-item">
+                  <span>通路預測</span>
+                  <strong>{merchantProfile.name}／{merchantProfile.channel}</strong>
+                </div>
+              </div>
               <div className="gps-row">
                 <div className="gps-left">
                   <span className={`gps-dot ${geo.status === 'ready' ? 'on' : geo.status === 'loading' ? 'loading' : ''}`} />
@@ -405,6 +593,29 @@ function App() {
                 開啟條碼付款 →
               </button>
             </div>
+
+            <div className="card">
+              <div className="clabel">SmartPay 今日最佳化摘要</div>
+              <div className="home-kpi-grid">
+                <div className="home-kpi-item">
+                  <div className="home-kpi-value">+NT$45</div>
+                  <div className="home-kpi-label">本次最優支付預估多賺</div>
+                </div>
+                <div className="home-kpi-item">
+                  <div className="home-kpi-value">3 項</div>
+                  <div className="home-kpi-label">待完成行前提醒</div>
+                </div>
+                <div className="home-kpi-item">
+                  <div className="home-kpi-value">4 張</div>
+                  <div className="home-kpi-label">已同步管理卡片</div>
+                </div>
+              </div>
+              <div className="home-cta-row">
+                <button className="quick-btn" onClick={() => setTab('pay')}>立即執行最優支付</button>
+                <button className="quick-btn" onClick={() => setTab('cards')}>前往卡片中心</button>
+              </div>
+            </div>
+
             <div className="card">
               <div className="clabel-row">
                 <div className="clabel" style={{ marginBottom: 0 }}>本月回饋總覽</div>
@@ -452,67 +663,114 @@ function App() {
                 <div className="clabel" style={{ marginBottom: 0 }}>持有卡片</div>
                 <button className="add-btn" type="button" onClick={() => setAddCardOpen(true)} aria-label="新增卡片">＋</button>
               </div>
-              {userCards.map((c) => (
-                <div key={c.id} className="cc-item" style={{ background: 'var(--color-background-secondary)' }}>
-                  <div className="cc-chip" style={{ background: c.chipBg }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="cc-name">{c.name}</div>
-                    <div className="cc-sub">{c.note} ・ {c.masked}</div>
+              <div className="card-manage-tip">已整合中信與他行卡片，優惠規則會自動同步更新（示意）。</div>
+              {userCards
+                .slice()
+                .sort((a, b) => a.priority - b.priority)
+                .map((c) => (
+                  <div key={c.id} className="cc-manage-item">
+                    <div className="cc-item" style={{ background: 'var(--color-background-secondary)', marginBottom: 0 }}>
+                    <button className="cc-item-hit" type="button" onClick={() => { setCardDetailId(c.id); setRuleTab('general') }} aria-label={`查看 ${c.name} 詳細規則`} />
+                      <div className="cc-chip" style={{ background: c.chipBg }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="cc-name">{c.name}</div>
+                        <div className="cc-sub">{c.note} ・ {c.masked}</div>
+                      </div>
+                      <span className="badge" style={c.issuer === 'ctbc' ? { background: 'var(--g50)', color: 'var(--g800)' } : { background: 'var(--color-background-tertiary)', color: 'var(--color-text-secondary)' }}>
+                        {c.issuer === 'ctbc' ? '中信' : '他行'}
+                      </span>
+                    </div>
+                    <div className="cc-controls">
+                      <label className="sp-label" style={{ marginBottom: 0 }}>
+                        優先順序
+                        <select
+                          className="sp-select cc-priority"
+                          value={String(c.priority)}
+                          onChange={(e) => updateCardPriority(c.id, Number(e.target.value))}
+                        >
+                          {Array.from({ length: userCards.length }).map((_, i) => (
+                            <option key={`${c.id}-${i + 1}`} value={String(i + 1)}>#{i + 1}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="cc-tag-wrap">
+                        {scenarioTags.map((tag) => (
+                          <button
+                            key={`${c.id}-${tag}`}
+                            type="button"
+                            className={`cc-tag ${c.tags.includes(tag) ? 'on' : ''}`}
+                            onClick={() => toggleCardTag(c.id, tag)}
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  {c.badgeText ? (
-                    <span className="badge" style={c.badgeStyle}>{c.badgeText}</span>
-                  ) : null}
-                </div>
-              ))}
+                ))}
             </div>
             <div className="card">
               <div className="clabel">回饋儀表板・本月</div>
-              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 10 }}>若每次都選最優卡，可多賺 NT$380</div>
-              <div style={{ marginBottom: 9 }}>
-                <div className="rbet" style={{ marginBottom: 4 }}><span style={{ fontSize: 12 }}>中信 Everywhere</span><span style={{ fontSize: 12, fontWeight: 500, color: 'var(--g800)' }}>NT$820</span></div>
-                <div className="prog"><div className="progb" style={{ width: '66%' }}></div></div>
+              <div className="dashboard-grid">
+                {userCards.map((c) => (
+                  <div key={`kpi-${c.id}`} className="dashboard-item">
+                    <div className="cc-name">{c.name}</div>
+                    <div className="cc-sub">本月回饋 NT${c.monthlyReward}・使用 {c.usageCount} 次</div>
+                    <div className="mini-split">
+                      <span>餐飲 {c.categorySplit.dining}%</span>
+                      <span>旅遊 {c.categorySplit.travel}%</span>
+                      <span>日常 {c.categorySplit.daily}%</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div style={{ marginBottom: 9 }}>
-                <div className="rbet" style={{ marginBottom: 4 }}><span style={{ fontSize: 12 }}>中信 @GOGO</span><span style={{ fontSize: 12, fontWeight: 500, color: 'var(--g800)' }}>NT$310</span></div>
-                <div className="prog"><div className="progb" style={{ width: '25%', background: 'var(--g400)' }}></div></div>
+              <div className="warn-bar" style={{ marginTop: 10 }}>
+                跨卡比較：若每次都用最優卡，本月可多賺 <strong style={{ color: '#7A5200' }}>NT$380</strong>
               </div>
-              <div>
-                <div className="rbet" style={{ marginBottom: 4 }}><span style={{ fontSize: 12 }}>其他</span><span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>NT$117</span></div>
-                <div className="prog"><div className="progb" style={{ width: '9%', background: '#B4B2A9' }}></div></div>
+              <div className="clabel" style={{ marginTop: 10, marginBottom: 6 }}>年度累積（示意）</div>
+              <div className="year-bars">
+                <div className="year-bar"><span>Q1</span><div className="prog"><div className="progb" style={{ width: '62%' }} /></div><strong>NT$2,540</strong></div>
+                <div className="year-bar"><span>Q2</span><div className="prog"><div className="progb" style={{ width: '48%', background: 'var(--g400)' }} /></div><strong>NT$1,980</strong></div>
+                <div className="year-bar"><span>Q3</span><div className="prog"><div className="progb" style={{ width: '36%', background: 'rgba(11,42,74,0.38)' }} /></div><strong>NT$1,420</strong></div>
               </div>
             </div>
             <div className="card">
-              <div className="clabel">點數到期提醒</div>
-              <div className="rbet" style={{ padding: '6px 0' }}>
-                <div>
-                  <div style={{ fontSize: 13 }}>航空哩程點數</div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 1 }}>建議兌換機票或里程升等</div>
+              <div className="clabel">即將到期提醒</div>
+              <div className="reminder-list">
+                <div className="reminder-item">
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>航空里程點數（30 天內）</div>
+                    <div className="cc-sub">建議優先兌換機票、里程升等等快速使用方式</div>
+                  </div>
+                  <div className="reminder-cta">2,400 點</div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: '#A32D2D' }}>2,400 點</div>
-                  <div style={{ fontSize: 11, color: '#A32D2D' }}>本月到期</div>
+                <div className="reminder-item">
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>限時活動登錄截止</div>
+                    <div className="cc-sub">中信卡友回饋活動 3 天後截止，避免漏登錄</div>
+                  </div>
+                  <div className="reminder-cta">剩 3 天</div>
+                </div>
+                <div className="reminder-item">
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>滿額禮進度追蹤</div>
+                    <div className="cc-sub">距離本季滿額禮還差 NT$2,300，可從量販/餐飲優先刷</div>
+                  </div>
+                  <div className="reminder-cta">差 NT$2,300</div>
                 </div>
               </div>
             </div>
             <div className="ai-box">
               <div className="ai-tag">AI 智慧推薦</div>
               <div className="ai-head">
-                <img className="ai-card-img" src={uniopenCardImg} alt="中信 uniopen 聯名卡" />
+                <img className="ai-card-img" src={uniopenCardImg} alt="中信 Everywhere 卡推薦" />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="ai-title">中信 uniopen 聯名卡</div>
-                  <div className="ai-sub">依你的消費習慣，這張卡在餐飲與量販情境更有利。</div>
-                  <div className="ai-chips" aria-label="適用情境">
-                    <span className="ai-chip">餐飲美食</span>
-                    <span className="ai-chip">生活量販</span>
-                  </div>
+                  <div className="ai-title">中信 Everywhere 卡</div>
+                  <div className="ai-sub">優先顯示中信卡，並提供可量化的年度增益試算</div>
                 </div>
               </div>
               <div className="ai-body">
-                <div className="ai-bullets">
-                  <div className="ai-bullet"><span className="ai-dot" /> 統一企業集團最高回饋 <strong style={{ color: 'var(--g800)' }}>11%</strong></div>
-                  <div className="ai-bullet"><span className="ai-dot" /> 國外消費最高回饋 <strong style={{ color: 'var(--g800)' }}>11%</strong></div>
-                  <div className="ai-bullet"><span className="ai-dot" /> 指定卡友日最優享買一送一</div>
-                </div>
+                根據你過去 6 個月的消費習慣，你在「餐廳」類別月均消費 NT$4,200，但目前使用卡片此類別僅有 1% 回饋。申辦中信 Everywhere 卡後，餐廳回饋率可達 5%，每年預計多賺 <strong style={{ color: 'var(--g800)' }}>NT$2,520</strong>。
               </div>
               <button
                 className="abtn"
@@ -538,23 +796,116 @@ function App() {
             <div className="topbar-sub">推播 + 掃碼・共用同一 AI 引擎</div>
           </div>
           <div className="body">
+            <div className="card">
+              <div className="clabel">運作模式</div>
+              <div className="pay-mode-tabs">
+                <button
+                  type="button"
+                  className={`pay-mode-btn ${payMode === 'proactive' ? 'on' : ''}`}
+                  onClick={() => setPayMode('proactive')}
+                >
+                  模式一：主動推播
+                </button>
+                <button
+                  type="button"
+                  className={`pay-mode-btn ${payMode === 'scan' ? 'on' : ''}`}
+                  onClick={() => setPayMode('scan')}
+                >
+                  模式二：現場掃碼
+                </button>
+              </div>
+            </div>
+
+            {payMode === 'proactive' ? (
+              <div className="card">
+                <div className="clabel">消費前推播設定</div>
+                <div className="sp-field">
+                  <label className="sp-label" htmlFor="prioritySelect">優先策略</label>
+                  <select
+                    id="prioritySelect"
+                    className="sp-select"
+                    value={payPriority}
+                    onChange={(e) => setPayPriority(e.target.value as PayPriority)}
+                  >
+                    <option value="points">優先折抵點數</option>
+                    <option value="miles">優先累積里程</option>
+                    <option value="cashback">優先現金回饋</option>
+                  </select>
+                </div>
+                <div className="pay-status-list">
+                  <div className="pay-status-item">
+                    <span>地理圍欄</span>
+                    <strong>{isInsideGeofence ? `已進入 ${merchantProfile.distanceM}m 觸發範圍` : `${merchantProfile.distanceM}m（尚未觸發）`}</strong>
+                  </div>
+                  <div className="pay-status-item">
+                    <span>抵達倒數</span>
+                    <strong>{isInsideGeofence ? '約 2 分鐘' : '約 4 分鐘'}</strong>
+                  </div>
+                  <div className="pay-status-item">
+                    <span>通路預測</span>
+                    <strong>{merchantProfile.name}／{merchantProfile.channel}</strong>
+                  </div>
+                </div>
+                <div className="info-bar" style={{ marginTop: 10 }}>{proactiveMessage}</div>
+              </div>
+            ) : (
+              <div className="card">
+                <div className="clabel">現場掃碼辨識</div>
+                <div className="sp-field">
+                  <label className="sp-label" htmlFor="merchantIdInput">Merchant ID（掃碼結果）</label>
+                  <input
+                    id="merchantIdInput"
+                    className="sp-input"
+                    value={merchantId}
+                    onChange={(e) => setMerchantId(e.target.value)}
+                    placeholder="例如：PXMART-001"
+                  />
+                </div>
+                <div className="pay-status-list" style={{ marginTop: 10 }}>
+                  <div className="pay-status-item">
+                    <span>GPS 定位</span>
+                    <strong>{geo.status === 'ready' ? `已定位（${geo.lat.toFixed(3)}, ${geo.lng.toFixed(3)}）` : '未定位'}</strong>
+                  </div>
+                  <div className="pay-status-item">
+                    <span>Merchant ID</span>
+                    <strong>{merchantId || '未輸入'}</strong>
+                  </div>
+                  <div className="pay-status-item">
+                    <span>雙重辨識結果</span>
+                    <strong>{merchantProfile.name}／{merchantProfile.channel}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="rec-card">
               <div className="rbet" style={{ marginBottom: 10 }}>
                 <div>
-                  <div className="rec-name">中信 Everywhere 卡</div>
-                  <div className="rec-sub">根據位置自動推薦・全聯超市</div>
+                  <div className="rec-name">{payRecommendation.card}</div>
+                  <div className="rec-sub">
+                    {payMode === 'scan'
+                      ? `GPS + Merchant ID 雙重辨識・${merchantProfile.name}`
+                      : `根據位置自動推薦・${merchantProfile.name}`}
+                  </div>
                 </div>
                 <span className="badge bg">最優</span>
               </div>
               <div className="rbet">
-                <div><div className="rec-rate">5%</div><div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>現金回饋</div></div>
+                <div><div className="rec-rate">{payRecommendation.percent}</div><div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{payRecommendation.rewardText}</div></div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>預計可得</div>
-                  <div style={{ fontSize: 20, fontWeight: 500, color: 'var(--g800)' }}>NT$45</div>
+                  <div style={{ fontSize: 20, fontWeight: 500, color: 'var(--g800)' }}>{payRecommendation.estimateText}</div>
                 </div>
               </div>
               <div className="div"></div>
-              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>本月加碼活動進行中・已完成活動登錄</div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                {payMode === 'scan'
+                  ? `掃碼前即時建議：本次建議使用【${payRecommendation.card}】`
+                  : '本月加碼活動進行中・已完成活動登錄'}
+              </div>
+              <div className="warn-bar" style={{ marginTop: 10 }}>
+                關鍵提醒：{selectedCard?.goReminder ?? '需單筆滿 NT$888 才可套用當期活動加碼'}
+              </div>
             </div>
             <div className="qbtn-wrap">
               <div className="qbtn" onClick={() => setScanOpen(true)}>
@@ -563,6 +914,9 @@ function App() {
               </div>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 10 }}>以推薦卡自動付款</div>
             </div>
+            <button className="abtn" type="button" style={{ marginTop: 0 }}>
+              一鍵確認付款
+            </button>
             <div className="card">
               <div className="clabel">手動切換卡片</div>
               <div className="sw-row">
@@ -573,7 +927,7 @@ function App() {
                   </div>
                   <div style={{ fontSize: 13 }}>中信 @GOGO 卡</div>
                 </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--g700)' }}>3%</span><span className="badge bg" style={{ cursor: 'pointer' }}>選擇</span></div>
+                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--g700)' }}>3%</span><span className="badge bg" style={{ cursor: 'pointer' }}>切換</span></div>
               </div>
               <div className="sw-row">
                 <div className="sw-left">
@@ -583,7 +937,7 @@ function App() {
                   </div>
                   <div style={{ fontSize: 13 }}>A 銀行白金卡</div>
                 </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>1%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>選擇</span></div>
+                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>1%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>切換</span></div>
               </div>
               <div className="sw-row">
                 <div className="sw-left">
@@ -593,7 +947,7 @@ function App() {
                   </div>
                   <div style={{ fontSize: 13 }}>B 銀行現金卡</div>
                 </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>2%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>選擇</span></div>
+                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>2%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>切換</span></div>
               </div>
             </div>
             <div className="info-bar">主動推播已開啟：導航時系統將在抵達前 2 分鐘自動推送最優刷卡建議。</div>
@@ -642,7 +996,13 @@ function App() {
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <table className="ctable">
                 <thead>
-                  <tr><th style={{ width: '34%' }}>卡片</th><th style={{ width: '17%' }}>手續費</th><th style={{ width: '17%' }}>回饋率</th><th style={{ width: '32%' }}>狀態</th></tr>
+                  <tr>
+                    <th style={{ width: '27%' }}>卡片</th>
+                    <th style={{ width: '16%' }}>海外手續費</th>
+                    <th style={{ width: '18%' }}>幣別轉換優惠</th>
+                    <th style={{ width: '16%' }}>實體店加碼</th>
+                    <th style={{ width: '23%' }}>行動提醒</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {(() => {
@@ -652,36 +1012,40 @@ function App() {
                         className: 'best',
                         card: <>中信 Everywhere<br /><span className="ltag">本月限時加碼</span></>,
                         fee: '免收',
-                        rate: '3%+1%',
-                        status: <span style={{ color: 'var(--g800)', fontWeight: 500 }}>已持有 ✓</span>,
-                        haystack: '中信 Everywhere 本月限時加碼 免收 3%+1% 已持有',
+                        fx: '指定幣別減碼',
+                        bonus: '3%+1%',
+                        status: <span style={{ color: 'var(--g800)', fontWeight: 500 }}>先登錄活動再刷 ✓</span>,
+                        haystack: '中信 Everywhere 本月限時加碼 免收 幣別減碼 實體店 3%+1% 需登錄',
                       },
                       {
                         key: 'gogo',
                         className: 'apply',
                         card: <>中信 @GOGO<br /><span className="atag">申辦即享優惠</span></>,
-                        fee: '免收',
-                        rate: '5%',
-                        status: <span className="alink">立即申辦 →</span>,
-                        haystack: '中信 @GOGO 申辦即享優惠 免收 5% 立即申辦',
+                        fee: '0.5% 起',
+                        fx: '海外通路加碼',
+                        bonus: '5%',
+                        status: <span className="alink">刷滿 NT$6,000 觸發 →</span>,
+                        haystack: '中信 @GOGO 申辦即享優惠 0.5% 海外通路加碼 5% 門檻 6000',
                       },
                       {
                         key: 'a',
                         className: '',
                         card: 'A 銀行卡',
                         fee: '1.5%',
-                        rate: '2%',
-                        status: <span style={{ color: 'var(--color-text-secondary)' }}>持有中</span>,
-                        haystack: 'A 銀行卡 1.5% 2% 持有中',
+                        fx: '一般匯率',
+                        bonus: '2%',
+                        status: <span style={{ color: 'var(--color-text-secondary)' }}>滿額 NT$20,000 才有贈禮</span>,
+                        haystack: 'A 銀行卡 1.5% 一般匯率 2% 滿額 20000',
                       },
                       {
                         key: 'b',
                         className: '',
                         card: 'B 銀行卡',
                         fee: '1.0%',
-                        rate: '1.5%',
-                        status: <span style={{ color: 'var(--color-text-secondary)' }}>持有中</span>,
-                        haystack: 'B 銀行卡 1.0% 1.5% 持有中',
+                        fx: '無',
+                        bonus: '1.5%',
+                        status: <span style={{ color: 'var(--color-text-secondary)' }}>可作備援卡</span>,
+                        haystack: 'B 銀行卡 1.0% 無匯率優惠 1.5% 備援',
                       },
                     ].filter((r) => matchesQuery(r.haystack))
 
@@ -690,7 +1054,8 @@ function App() {
                         <tr key={r.key} className={r.className}>
                           <td>{r.card}</td>
                           <td>{r.fee}</td>
-                          <td>{r.rate}</td>
+                          <td>{r.fx}</td>
+                          <td>{r.bonus}</td>
                           <td>{r.status}</td>
                         </tr>
                       ))
@@ -705,6 +1070,28 @@ function App() {
                 </tbody>
               </table>
             </div>
+            <div className="card">
+              <div className="clabel">目的地智慧建議</div>
+              <div className="insight-title">{travelInsight.recommendation.title}</div>
+              <div className="cc-sub" style={{ marginTop: 4 }}>{travelInsight.recommendation.action}</div>
+              <div className="info-bar" style={{ marginTop: 10 }}>
+                建議主力卡：<strong style={{ color: 'var(--g800)' }}>{travelInsight.recommendation.bestCard}</strong>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="clabel">銀行公告隱藏條件（白話提醒）</div>
+              <div className="notice-list">
+                {travelInsight.notices.map((n) => (
+                  <div className="notice-item" key={n.bank}>
+                    <div className="notice-bank">{n.bank}</div>
+                    <div className="cc-sub" style={{ marginTop: 2 }}>原始條件：{n.raw}</div>
+                    <div className="notice-plain">行動提醒：{n.plain}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {matchesQuery('申辦 @GOGO 多 2% 回饋 NT$600') ? (
               <div className="warn-bar">申辦中信 @GOGO 可多 2% 回饋，行程消費 NT$30,000 可多賺 NT$600。<strong style={{ color: '#7A5200', cursor: 'pointer' }}>立即申辦 →</strong></div>
             ) : null}
@@ -712,34 +1099,27 @@ function App() {
               <div className="info-bar">中信卡使用佔比僅 38%，切換 Everywhere 卡可達成本季滿額禮門檻並多賺 NT$420。</div>
             ) : null}
             <div className="card">
-              <div className="clabel">行前待辦清單</div>
-              {matchesQuery('確認持有 中信 Everywhere') ? (
-                <div className="chk-row"><div className="chk chk-ok">✓</div><div>確認持有中信 Everywhere 卡</div></div>
-              ) : null}
-              {matchesQuery('登錄 限時 加碼 活動 截止') ? (
-                <div className="chk-row"><div className="chk chk-warn">!</div><div style={{ color: '#5C3D00' }}>登錄限時加碼活動<span style={{ fontSize: 11, marginLeft: 6, color: '#A06000' }}>3 天後截止</span></div></div>
-              ) : null}
-              {matchesQuery('考慮 申辦 中信 @GOGO 海外 最優') ? (
-                <div className="chk-row"><div className="chk chk-off">○</div><div style={{ color: 'var(--color-text-secondary)' }}>考慮申辦中信 @GOGO 卡（海外最優）</div></div>
-              ) : null}
-              {matchesQuery('確認 日本 現金 換匯') ? (
-                <div className="chk-row"><div className="chk chk-off">○</div><div style={{ color: 'var(--color-text-secondary)' }}>確認日本現金換匯需求</div></div>
-              ) : null}
-              {q.length > 0 &&
-              !matchesQuery('確認持有 中信 Everywhere') &&
-              !matchesQuery('登錄 限時 加碼 活動 截止') &&
-              !matchesQuery('考慮 申辦 中信 @GOGO 海外 最優') &&
-              !matchesQuery('確認 日本 現金 換匯') ? (
-                <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-                  待辦清單沒有符合「{travelQuery}」的項目
-                </div>
+              <div className="clabel">行前時間軸待辦</div>
+              <div className="timeline">
+                {travelInsight.timeline
+                  .filter((t) => matchesQuery(`${t.day} ${t.task}`))
+                  .map((t) => (
+                    <div className="timeline-item" key={t.day}>
+                      <div className="timeline-day">{t.day}</div>
+                      <div className="timeline-line" />
+                      <div className="timeline-task">{t.task}</div>
+                    </div>
+                  ))}
+              </div>
+              {travelInsight.timeline.filter((t) => matchesQuery(`${t.day} ${t.task}`)).length === 0 ? (
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>時間軸沒有符合「{travelQuery}」的項目</div>
               ) : null}
             </div>
           </div>
         </div>
       ),
     } satisfies Record<TabId, React.ReactNode>
-  }, [countries, geo, q, travelCountry, travelQuery, userCards])
+  }, [countries, geo, merchantId, matchesQuery, payMode, payPriority, payRecommendation, proactiveMessage, q, travelCountry, travelQuery, userCards, isInsideGeofence, merchantProfile])
 
   return (
     <div className="wrap" id="root-phone">
@@ -797,12 +1177,26 @@ function App() {
             {
               id: `user-${Date.now()}`,
               name,
+              issuer: name.includes('中信') || type === '旅遊/海外' ? 'ctbc' : 'other',
               type,
               masked,
-              note: type,
+              note: `${type} 自動規則同步`,
+              priority: prev.length + 1,
+              tags: ['日常購物'],
+              monthlyReward: 0,
+              usageCount: 0,
+              categorySplit: { dining: 0, travel: 0, daily: 100 },
               badgeText: badge.text,
               badgeStyle: badge.style,
               chipBg: 'var(--g800)',
+              goRate: type === '旅遊/海外' ? '3%' : '1%',
+              goReminder: '請先確認活動是否需登錄與單筆門檻',
+              rules: {
+                general: ['一般消費回饋依銀行公告'],
+                overseas: ['海外刷卡回饋依當期活動公告'],
+                ecommerce: ['網購/外送類別依平台與月份不同'],
+              },
+              sourceUrl: 'https://www.ctbcbank.com/twrbo/zh_tw/cc_index/cc_product/cc_hot.html',
             },
           ])
         }}
@@ -861,6 +1255,62 @@ function App() {
           </div>
         </div>
         <button className="modal-backdrop" onClick={() => setRewardDetailOpen(false)} aria-label="Close" />
+      </div>
+
+      <div className={`modal-wrap ${selectedCard ? 'on' : ''}`} role="dialog" aria-modal="true">
+        <div className="modal-sheet">
+          <div className="rbet" style={{ marginBottom: 10 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text-primary)' }}>{selectedCard?.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>{selectedCard?.masked}</div>
+            </div>
+            <button onClick={() => setCardDetailId(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>×</button>
+          </div>
+
+          <div className="card" style={{ padding: 12 }}>
+            <div className="clabel" style={{ marginBottom: 8 }}>第一層：消費當下建議（Go）</div>
+            <div className="rbet">
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>推薦卡片</span>
+              <strong style={{ fontSize: 13, color: 'var(--g800)' }}>{selectedCard?.name}</strong>
+            </div>
+            <div className="rbet" style={{ marginTop: 6 }}>
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>預計回饋率</span>
+              <strong style={{ fontSize: 13, color: 'var(--g800)' }}>{selectedCard?.goRate}</strong>
+            </div>
+            <div className="warn-bar" style={{ marginTop: 8 }}>關鍵提醒：{selectedCard?.goReminder}</div>
+          </div>
+
+          <div className="card" style={{ padding: 12, marginTop: 10 }}>
+            <div className="clabel" style={{ marginBottom: 8 }}>第二層：卡片詳細清單（Review）</div>
+            <div className="rule-tabs">
+              <button className={`rule-tab ${ruleTab === 'general' ? 'on' : ''}`} type="button" onClick={() => setRuleTab('general')}>一般消費</button>
+              <button className={`rule-tab ${ruleTab === 'overseas' ? 'on' : ''}`} type="button" onClick={() => setRuleTab('overseas')}>海外旅遊</button>
+              <button className={`rule-tab ${ruleTab === 'ecommerce' ? 'on' : ''}`} type="button" onClick={() => setRuleTab('ecommerce')}>網購外送</button>
+            </div>
+            <div className="rule-list">
+              {(selectedCard?.rules[ruleTab] ?? []).map((item) => (
+                <div key={item} className="rule-item">- {item}</div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 12, marginTop: 10 }}>
+            <div className="clabel" style={{ marginBottom: 6 }}>第三層：原始條款對照（Source）</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>如需核對完整條款，請前往銀行官網原文頁。</div>
+            <button
+              className="link-btn"
+              type="button"
+              style={{ marginTop: 8, paddingLeft: 0 }}
+              onClick={() => {
+                if (!selectedCard?.sourceUrl) return
+                window.open(selectedCard.sourceUrl, '_blank', 'noopener,noreferrer')
+              }}
+            >
+              查看原文 →
+            </button>
+          </div>
+        </div>
+        <button className="modal-backdrop" onClick={() => setCardDetailId(null)} aria-label="Close" />
       </div>
     </div>
   )
