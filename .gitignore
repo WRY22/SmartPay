@@ -25,6 +25,5 @@ dist-ssr
 
 #爬蟲用
 credit_cards_data.json
-fetch.py
 
 .github
