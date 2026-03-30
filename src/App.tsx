@@ -2,6 +2,71 @@ import { useEffect, useMemo, useState } from 'react'
 import './smartpay.css'
 import uniopenCardImg from './assets/uniopen-card.png'
 
+// 爬蟲數據類型定義
+interface CreditCard {
+  cardId: string
+  cardName: string
+  cardImg: string[]
+  cardFeature: string[]
+  cardFeatureHighlight: string[]
+  issueGroup: string[]
+  introLink: string
+  applyLink: string
+  starRate: number
+  shortIntro: string
+  [key: string]: any
+}
+
+interface CreditCardsData {
+  creditCards: CreditCard[]
+}
+
+// ==================== 銀行配置 ====================
+// 用於管理不同銀行的前綴和信息，便於日後擴展支持其他銀行
+const BANK_CONFIG = {
+  ctbc: {
+    name: '中信銀行',
+    prefix: 'https://www.ctbcbank.com'
+  },
+  // 未來可以擴展其他銀行
+  // example: {
+  //   name: '範例銀行',
+  //   prefix: 'https://www.example.com'
+  // }
+} as const
+
+type BankKey = keyof typeof BANK_CONFIG
+
+/**
+ * 根據銀行 key 和 URL 生成完整的 URL
+ * 示例：ensureFullUrl('/content/...', 'ctbc') → 'https://www.ctbcbank.com/content/...'
+ */
+function ensureFullUrl(url: string | undefined, bank: BankKey = 'ctbc'): string {
+  if (!url) return ''
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url
+  }
+  const bankConfig = BANK_CONFIG[bank]
+  return `${bankConfig.prefix}${url}`
+}
+
+// 動態導入爬蟲數據
+let creditCardsDataCache: CreditCardsData | null = null
+
+async function loadCreditCardsData(): Promise<CreditCardsData> {
+  if (creditCardsDataCache) {
+    return creditCardsDataCache
+  }
+  try {
+    const response = await fetch('/credit_cards_data.json')
+    creditCardsDataCache = await response.json()
+    return creditCardsDataCache as CreditCardsData
+  } catch (error) {
+    console.error('載入信用卡數據失敗:', error)
+    return { creditCards: [] }
+  }
+}
+
 type TabId = 'home' | 'cards' | 'pay' | 'travel'
 
 function Icon({ name }: { name: 'home' | 'card' | 'pay' | 'travel' }) {
@@ -128,6 +193,7 @@ type UserCard = {
   id: string
   name: string
   issuer: 'ctbc' | 'other'
+  bank: BankKey  // 銀行 key，用於確定 URL 前綴
   type: UserCardType
   masked: string
   note: string
@@ -147,6 +213,12 @@ type UserCard = {
     ecommerce: string[]
   }
   sourceUrl: string
+  // 爬蟲數據字段
+  cardId?: string
+  cardName?: string
+  cardImg?: string[]
+  cardFeature?: string[]
+  introLink?: string
 }
 
 function AddCardModal({
@@ -156,12 +228,22 @@ function AddCardModal({
 }: {
   open: boolean
   onClose: () => void
-  onSave: (card: { name: string; type: UserCardType; cardNumber: string }) => void
+  onSave: (card: { name: string; type: UserCardType; cardNumber: string; cardId?: string; cardName?: string }) => void
 }) {
   const [name, setName] = useState('新信用卡')
   const [type, setType] = useState<UserCardType>('一般回饋')
   const [cardNumber, setCardNumber] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [creditCardsData, setCreditCardsData] = useState<CreditCardsData>({ creditCards: [] })
+  const [cardSearchQuery, setCardSearchQuery] = useState('')
+  const [showCardDropdown, setShowCardDropdown] = useState(false)
+
+  // 載入爬蟲數據
+  useEffect(() => {
+    if (!open) return
+    loadCreditCardsData().then(setCreditCardsData)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -169,12 +251,24 @@ function AddCardModal({
     setName('新信用卡')
     setType('一般回饋')
     setCardNumber('')
+    setSelectedCardId(null)
+    setCardSearchQuery('')
+    setShowCardDropdown(false)
   }, [open])
 
   if (!open) return null
 
   const digits = cardNumber.replace(/\D/g, '')
-  const canSave = digits.length >= 12
+  const canSave = (digits.length >= 12 && name.trim().length > 0) || selectedCardId
+
+  // 當選擇爬蟲數據中的卡片時，自動填充資料
+  const handleSelectCard = (cardId: string) => {
+    setSelectedCardId(cardId)
+    const card = creditCardsData.creditCards.find(c => c.cardId === cardId)
+    if (card) {
+      setName(card.cardName)
+    }
+  }
 
   return (
     <div className="modal-wrap on" role="dialog" aria-modal="true">
@@ -187,7 +281,107 @@ function AddCardModal({
           <button onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
-        <div className="sp-field">
+        {/* 快速選擇中信卡片 - 搜索下拉菜單 */}
+        {creditCardsData.creditCards.length > 0 ? (
+          <div className="sp-field" style={{ position: 'relative' }}>
+            <label className="sp-label" htmlFor="cardSearch">選擇中信卡片（可選）</label>
+            <input
+              id="cardSearch"
+              className="sp-input"
+              type="text"
+              placeholder="搜尋卡片名稱或發卡組織..."
+              value={cardSearchQuery}
+              onChange={(e) => {
+                setCardSearchQuery(e.target.value)
+                setShowCardDropdown(true)
+              }}
+              onFocus={() => setShowCardDropdown(true)}
+              style={{
+                position: 'relative',
+                zIndex: showCardDropdown ? 10 : 1
+              }}
+            />
+            
+            {/* 下拉選擇菜單 */}
+            {showCardDropdown && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  marginTop: 4,
+                  background: 'white',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 6,
+                  maxHeight: 300,
+                  overflowY: 'auto',
+                  zIndex: 100,
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)'
+                }}
+              >
+                {creditCardsData.creditCards
+                  .filter(card =>
+                    card.cardName.toLowerCase().includes(cardSearchQuery.toLowerCase()) ||
+                    card.issueGroup.some(group =>
+                      group.toLowerCase().includes(cardSearchQuery.toLowerCase())
+                    )
+                  )
+                  .map(card => (
+                    <div
+                      key={card.cardId}
+                      onClick={() => {
+                        handleSelectCard(card.cardId)
+                        setCardSearchQuery(card.cardName)
+                        setShowCardDropdown(false)
+                      }}
+                      style={{
+                        padding: '10px 12px',
+                        borderBottom: '1px solid var(--color-border)',
+                        cursor: 'pointer',
+                        background: selectedCardId === card.cardId ? 'var(--g50)' : 'transparent',
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedCardId !== card.cardId) {
+                          e.currentTarget.style.background = 'var(--color-background-secondary)'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedCardId !== card.cardId) {
+                          e.currentTarget.style.background = 'transparent'
+                        }
+                      }}
+                    >
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{card.cardName}</div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                        發卡組織: {card.issueGroup.join('、')}
+                      </div>
+                    </div>
+                  ))}
+                {cardSearchQuery && creditCardsData.creditCards.filter(card =>
+                  card.cardName.toLowerCase().includes(cardSearchQuery.toLowerCase()) ||
+                  card.issueGroup.some(group =>
+                    group.toLowerCase().includes(cardSearchQuery.toLowerCase())
+                  )
+                ).length === 0 && (
+                  <div
+                    style={{
+                      padding: '12px',
+                      textAlign: 'center',
+                      color: 'var(--color-text-secondary)',
+                      fontSize: 12
+                    }}
+                  >
+                    找不到符合「{cardSearchQuery}」的卡片
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <div className="sp-field" style={{ marginTop: 10 }}>
           <label className="sp-label" htmlFor="cardName">卡片名稱</label>
           <input
             id="cardName"
@@ -236,8 +430,23 @@ function AddCardModal({
             type="button"
             disabled={!canSave}
             onClick={() => {
+              if (selectedCardId) {
+                const card = creditCardsData.creditCards.find(c => c.cardId === selectedCardId)
+                if (card) {
+                  onSave({
+                    name: card.cardName,
+                    type,
+                    cardNumber: digits || '0000000000000000',
+                    cardId: card.cardId,
+                    cardName: card.cardName
+                  })
+                  onClose()
+                }
+                return
+              }
+
               if (!canSave) {
-                setError('請輸入至少 12 碼卡號')
+                setError('請輸入至少 12 碼卡號或選擇中信卡片')
                 return
               }
               onSave({ name: name.trim() || '新信用卡', type, cardNumber: digits })
@@ -285,6 +494,7 @@ function App() {
       id: 'everywhere',
       name: '中信 Everywhere 卡',
       issuer: 'ctbc',
+      bank: 'ctbc',
       type: '現金回饋',
       masked: '**** **** **** 1234',
       note: '一般消費 3% 現金回饋',
@@ -309,6 +519,7 @@ function App() {
       id: 'gogo',
       name: '中信 @GOGO 卡',
       issuer: 'ctbc',
+      bank: 'ctbc',
       type: '旅遊/海外',
       masked: '**** **** **** 5678',
       note: '海外 5% 點數',
@@ -333,6 +544,7 @@ function App() {
       id: 'a',
       name: 'A 銀行白金卡',
       issuer: 'other',
+      bank: 'ctbc',
       type: '一般回饋',
       masked: '**** **** **** 0007',
       note: '一般消費 1% 回饋',
@@ -671,7 +883,21 @@ function App() {
                   <div key={c.id} className="cc-manage-item">
                     <div className="cc-item" style={{ background: 'var(--color-background-secondary)', marginBottom: 0 }}>
                     <button className="cc-item-hit" type="button" onClick={() => { setCardDetailId(c.id); setRuleTab('general') }} aria-label={`查看 ${c.name} 詳細規則`} />
-                      <div className="cc-chip" style={{ background: c.chipBg }} />
+                      {c.cardImg && c.cardImg.length > 0 ? (
+                        <img
+                          src={ensureFullUrl(c.cardImg[0], c.bank || 'ctbc')}
+                          alt={`${c.name} 卡片`}
+                          style={{
+                            width: 56,
+                            height: 36,
+                            borderRadius: 4,
+                            objectFit: 'cover',
+                            flexShrink: 0
+                          }}
+                        />
+                      ) : (
+                        <div className="cc-chip" style={{ background: c.chipBg }} />
+                      )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="cc-name">{c.name}</div>
                         <div className="cc-sub">{c.note} ・ {c.masked}</div>
@@ -919,36 +1145,45 @@ function App() {
             </button>
             <div className="card">
               <div className="clabel">手動切換卡片</div>
-              <div className="sw-row">
-                <div className="sw-left">
-                  <div className="card-thumb" data-variant="gogo" aria-hidden="true">
-                    <div className="card-chip" />
-                    <div className="card-brand" />
+              {userCards.map((card) => (
+                <div key={card.id} className="sw-row">
+                  <div className="sw-left">
+                    {card.cardImg && card.cardImg.length > 0 ? (
+                      <img
+                        src={ensureFullUrl(card.cardImg[0], card.bank || 'ctbc')}
+                        alt={`${card.name} 卡片`}
+                        style={{
+                          width: 44,
+                          height: 28,
+                          borderRadius: 4,
+                          objectFit: 'cover'
+                        }}
+                      />
+                    ) : (
+                      <div className="card-thumb" aria-hidden="true">
+                        <div className="card-chip" style={{ background: card.chipBg }} />
+                        <div className="card-brand" />
+                      </div>
+                    )}
+                    <div style={{ fontSize: 13 }}>{card.name}</div>
                   </div>
-                  <div style={{ fontSize: 13 }}>中信 @GOGO 卡</div>
-                </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--g700)' }}>3%</span><span className="badge bg" style={{ cursor: 'pointer' }}>切換</span></div>
-              </div>
-              <div className="sw-row">
-                <div className="sw-left">
-                  <div className="card-thumb" data-variant="a" aria-hidden="true">
-                    <div className="card-chip" />
-                    <div className="card-brand" />
+                  <div className="row" style={{ gap: 6 }}>
+                    <span style={{ fontSize: 13, color: card.issuer === 'ctbc' ? 'var(--g700)' : 'var(--color-text-secondary)' }}>
+                      {card.goRate}
+                    </span>
+                    <span 
+                      className="badge" 
+                      style={{ 
+                        background: card.issuer === 'ctbc' ? 'var(--g50)' : 'var(--color-background-secondary)',
+                        color: card.issuer === 'ctbc' ? 'var(--g800)' : 'var(--color-text-secondary)',
+                        cursor: 'pointer' 
+                      }}
+                    >
+                      切換
+                    </span>
                   </div>
-                  <div style={{ fontSize: 13 }}>A 銀行白金卡</div>
                 </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>1%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>切換</span></div>
-              </div>
-              <div className="sw-row">
-                <div className="sw-left">
-                  <div className="card-thumb" data-variant="b" aria-hidden="true">
-                    <div className="card-chip" />
-                    <div className="card-brand" />
-                  </div>
-                  <div style={{ fontSize: 13 }}>B 銀行現金卡</div>
-                </div>
-                <div className="row" style={{ gap: 6 }}><span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>2%</span><span className="badge" style={{ background: 'var(--color-background-secondary)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>切換</span></div>
-              </div>
+              ))}
             </div>
             <div className="info-bar">主動推播已開啟：導航時系統將在抵達前 2 分鐘自動推送最優刷卡建議。</div>
           </div>
@@ -1160,7 +1395,7 @@ function App() {
       <AddCardModal
         open={addCardOpen}
         onClose={() => setAddCardOpen(false)}
-        onSave={({ name, type, cardNumber }) => {
+        onSave={({ name, type, cardNumber, cardId, cardName: selectedCardName }) => {
           const last4 = cardNumber.slice(-4)
           const masked = `**** **** **** ${last4}`
           const badge =
@@ -1172,33 +1407,45 @@ function App() {
                   ? { text: '回饋', style: { background: 'var(--g50)', color: 'var(--g800)' } }
                   : { text: '新卡', style: { background: 'var(--color-background-tertiary)', color: 'var(--color-text-secondary)' } }
 
-          setUserCards((prev) => [
-            ...prev,
-            {
-              id: `user-${Date.now()}`,
-              name,
-              issuer: name.includes('中信') || type === '旅遊/海外' ? 'ctbc' : 'other',
-              type,
-              masked,
-              note: `${type} 自動規則同步`,
-              priority: prev.length + 1,
-              tags: ['日常購物'],
-              monthlyReward: 0,
-              usageCount: 0,
-              categorySplit: { dining: 0, travel: 0, daily: 100 },
-              badgeText: badge.text,
-              badgeStyle: badge.style,
-              chipBg: 'var(--g800)',
-              goRate: type === '旅遊/海外' ? '3%' : '1%',
-              goReminder: '請先確認活動是否需登錄與單筆門檻',
-              rules: {
-                general: ['一般消費回饋依銀行公告'],
-                overseas: ['海外刷卡回饋依當期活動公告'],
-                ecommerce: ['網購/外送類別依平台與月份不同'],
+          // 異步載入爬蟲數據以獲取卡片信息
+          loadCreditCardsData().then(data => {
+            const ctbcCard = cardId ? data.creditCards.find(c => c.cardId === cardId) : null
+
+            setUserCards((prev) => [
+              ...prev,
+              {
+                id: `user-${Date.now()}`,
+                name,
+                issuer: name.includes('中信') || type === '旅遊/海外' || !!cardId ? 'ctbc' : 'other',
+                bank: 'ctbc',  // 目前預設為中信，未來可根據用戶選擇動態設置
+                type,
+                masked,
+                note: `${type} 自動規則同步`,
+                priority: prev.length + 1,
+                tags: ['日常購物'],
+                monthlyReward: 0,
+                usageCount: 0,
+                categorySplit: { dining: 0, travel: 0, daily: 100 },
+                badgeText: badge.text,
+                badgeStyle: badge.style,
+                chipBg: 'var(--g800)',
+                goRate: type === '旅遊/海外' ? '3%' : '1%',
+                goReminder: '請先確認活動是否需登錄與單筆門檻',
+                rules: {
+                  general: ['一般消費回饋依銀行公告'],
+                  overseas: ['海外刷卡回饋依當期活動公告'],
+                  ecommerce: ['網購/外送類別依平台與月份不同'],
+                },
+                sourceUrl: ctbcCard?.introLink || 'https://www.ctbcbank.com/twrbo/zh_tw/cc_index/cc_product/cc_hot.html',
+                // 爬蟲數據字段
+                cardId,
+                cardName: selectedCardName,
+                cardImg: ctbcCard?.cardImg || [],
+                cardFeature: ctbcCard?.cardFeature || [],
+                introLink: ctbcCard?.introLink,
               },
-              sourceUrl: 'https://www.ctbcbank.com/twrbo/zh_tw/cc_index/cc_product/cc_hot.html',
-            },
-          ])
+            ])
+          })
         }}
       />
       <div className={`modal-wrap ${rewardDetailOpen ? 'on' : ''}`} role="dialog" aria-modal="true">
@@ -1258,14 +1505,86 @@ function App() {
       </div>
 
       <div className={`modal-wrap ${selectedCard ? 'on' : ''}`} role="dialog" aria-modal="true">
-        <div className="modal-sheet">
-          <div className="rbet" style={{ marginBottom: 10 }}>
+        <div 
+          className="modal-sheet"
+          style={{
+            maxHeight: '50vh',
+            display: 'flex',
+            flexDirection: 'column',
+            borderRadius: '16px 16px 0 0'
+          }}
+        >
+          <div 
+            className="rbet" 
+            style={{ 
+              marginBottom: 10,
+              paddingBottom: 10,
+              borderBottom: '1px solid var(--color-border)',
+              flexShrink: 0
+            }}
+          >
             <div>
               <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text-primary)' }}>{selectedCard?.name}</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>{selectedCard?.masked}</div>
             </div>
             <button onClick={() => setCardDetailId(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>×</button>
           </div>
+
+          <div 
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              paddingRight: 4,
+              paddingBottom: 16
+            }}
+          >
+
+          {/* 卡片照片展示 */}
+          {selectedCard?.cardImg && selectedCard.cardImg.length > 0 ? (
+            <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+              <div className="clabel" style={{ marginBottom: 8 }}>卡片圖片</div>
+              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 8 }}>
+                {selectedCard.cardImg.map((img, idx) => (
+                  <img
+                    key={idx}
+                    src={ensureFullUrl(img, selectedCard.bank || 'ctbc')}
+                    alt={`${selectedCard.cardName} 卡片 ${idx + 1}`}
+                    style={{
+                      height: 120,
+                      borderRadius: 8,
+                      flexShrink: 0,
+                      objectFit: 'cover'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* 機構回饋簡介 */}
+          {selectedCard?.cardFeature && selectedCard.cardFeature.length > 0 ? (
+            <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+              <div className="clabel" style={{ marginBottom: 8 }}>信用卡優惠簡介</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {selectedCard.cardFeature.map((feature, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--color-text-primary)',
+                      paddingLeft: 8,
+                      borderLeft: '3px solid var(--g400)',
+                      paddingTop: 4,
+                      paddingBottom: 4
+                    }}
+                  >
+                    • {feature}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="card" style={{ padding: 12 }}>
             <div className="clabel" style={{ marginBottom: 8 }}>第一層：消費當下建議（Go）</div>
@@ -1302,12 +1621,16 @@ function App() {
               type="button"
               style={{ marginTop: 8, paddingLeft: 0 }}
               onClick={() => {
-                if (!selectedCard?.sourceUrl) return
-                window.open(selectedCard.sourceUrl, '_blank', 'noopener,noreferrer')
+                // 優先使用爬蟲數據中的 introLink，否則使用 sourceUrl
+                const bank = selectedCard?.bank || 'ctbc'
+                const url = ensureFullUrl(selectedCard?.introLink, bank) || ensureFullUrl(selectedCard?.sourceUrl, bank)
+                if (!url) return
+                window.open(url, '_blank', 'noopener,noreferrer')
               }}
             >
               查看原文 →
             </button>
+          </div>
           </div>
         </div>
         <button className="modal-backdrop" onClick={() => setCardDetailId(null)} aria-label="Close" />
